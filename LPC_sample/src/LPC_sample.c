@@ -8,21 +8,14 @@
 ===============================================================================
 */
 
-#if defined (__USE_LPCOPEN)
-	#if defined(NO_BOARD_LIB)
-		#include "chip.h"
-	#else
-		#include "board.h"
-	#endif
-#endif
 
+#include "chip.h"
+#include "board.h"
 #include <cr_section_macros.h>
-
-// TODO: insert other include files here
 #include "string.h"
 #include <stdlib.h>
 
-// TODO: insert other definitions and declarations here
+
 /*****************************************************************************
  * Private types/enumerations/variables
  ****************************************************************************/
@@ -40,66 +33,48 @@ static uint8_t rxbuff[UART_RRB_SIZE], txbuff[UART_SRB_SIZE];
 
 #define DEFAULT_I2C          I2C0
 
-#define DEFAULT_MPU6050_ADDR 0x68 // by default
+#define DEFAULT_MPU6050_ADDR 0x68
 
 #define PWR_MGMT_1           0x6B
 #define ACCEL_XOUT_H         0x3B
-// in order:
-// ACCEL_XOUT_H, ACCEL_XOUT_L, ACCEL_YOUT_H, ACCEL_YOUT_L, ACCEL_ZOUT_H, and ACCEL_ZOUT_L
-#define TEMP_OUT_H           0x41
-#define TEMP_OUT_L           0x42
-// and again:
-// GYRO_XOUT_H, GYRO_XOUT_L, GYRO_YOUT_H, GYRO_YOUT_L, GYRO_ZOUT_H, and GYRO_ZOUT_L
+/* in order:
+ACCEL_XOUT_H
+ACCEL_XOUT_L
+ACCEL_YOUT_H
+ACCEL_YOUT_L
+ACCEL_ZOUT_H
+ACCEL_ZOUT_L
+TEMP_OUT_H
+TEMP_OUT_L
+GYRO_XOUT_H
+GYRO_XOUT_L
+GYRO_YOUT_H
+GYRO_YOUT_L
+GYRO_ZOUT_H
+GYRO_ZOUT_L */
 
-#define SPEED_100KHZ         100000
-#define SPEED_400KHZ         400000
-#define I2C_DEFAULT_SPEED    SPEED_100KHZ
+#define I2C_DEFAULT_SPEED    100000
 #define I2C_FASTPLUS_BIT     0
 
-#if (I2C_DEFAULT_SPEED > SPEED_400KHZ)
-	#undef  I2C_FASTPLUS_BIT
-	#define I2C_FASTPLUS_BIT IOCON_FASTI2C_EN
-#endif
+static int mode_poll;
+static I2C_ID_T i2cDev = DEFAULT_I2C;
 
-static int mode_poll;	/* Poll/Interrupt mode flag */
-static I2C_ID_T i2cDev = DEFAULT_I2C;	/* Currently active I2C device */
-
-
-/*****************************************************************************
- * Public types/enumerations/variables
- ****************************************************************************/
 
 /*****************************************************************************
  * Private functions
  ****************************************************************************/
 
-static void Init_UART_PinMux(void)
+static void Init_PinMux(void)
 {
-#if (defined(BOARD_NXP_XPRESSO_11U14) || defined(BOARD_NGX_BLUEBOARD_11U24))
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 18, IOCON_FUNC1 | IOCON_MODE_INACT);	/* PIO0_18 used for RXD */
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 19, IOCON_FUNC1 | IOCON_MODE_INACT);	/* PIO0_19 used for TXD */
-#elif (defined(BOARD_NXP_XPRESSO_11C24) || defined(BOARD_MCORE48_1125))
 	// check http://www.nxp.com/documents/user_manual/UM10398.pdf
+	/* UART */
 	Chip_IOCON_PinMuxSet(LPC_IOCON, IOCON_PIO1_6, (IOCON_FUNC1 | IOCON_MODE_INACT));/* RXD */
 	Chip_IOCON_PinMuxSet(LPC_IOCON, IOCON_PIO1_7, (IOCON_FUNC1 | IOCON_MODE_INACT));/* TXD */
-#else
-	#error "No Pin muxing defined for UART operation"
-#endif
-}
 
-static void Init_I2C_PinMux(void)
-{
-#if (defined(BOARD_NXP_XPRESSO_11U14) || defined(BOARD_NGX_BLUEBOARD_11U24))
-	Chip_SYSCTL_PeriphReset(RESET_I2C0);
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 4, IOCON_FUNC1 | I2C_FASTPLUS_BIT);
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 5, IOCON_FUNC1 | I2C_FASTPLUS_BIT);
-#elif (defined(BOARD_NXP_XPRESSO_11C24) || defined(BOARD_MCORE48_1125))
+	/* I2C */
 	Chip_SYSCTL_PeriphReset(RESET_I2C0);
 	Chip_IOCON_PinMuxSet(LPC_IOCON, IOCON_PIO0_4, IOCON_FUNC1 | I2C_FASTPLUS_BIT);
 	Chip_IOCON_PinMuxSet(LPC_IOCON, IOCON_PIO0_5, IOCON_FUNC1 | I2C_FASTPLUS_BIT);
-#else
-	#error "No Pin Muxing defined for I2C operation"
-#endif
 }
 
 
@@ -132,8 +107,6 @@ static void i2c_set_mode(I2C_ID_T id, int polling)
 /* Initialize the I2C bus */
 static void i2c_app_init(I2C_ID_T id, int speed)
 {
-	Init_I2C_PinMux();
-
 	/* Initialize I2C */
 	Chip_I2C_Init(id);
 	Chip_I2C_SetClockRate(id, speed);
@@ -153,10 +126,6 @@ static void i2c_app_init(I2C_ID_T id, int speed)
  */
 void UART_IRQHandler(void)
 {
-	/* Want to handle any errors? Do it here. */
-
-	/* Use default ring buffer handler. Override this with your own
-	   code if you need more capability. */
 	Chip_UART_IRQRBHandler(LPC_USART, &rxring, &txring);
 }
 
@@ -174,25 +143,14 @@ void I2C_IRQHandler(void)
  * @return	Always returns 1
  */
 int main(void) {
+	uint8_t key = 0;
+	uint8_t buff[14] = {0};
 
-#if defined (__USE_LPCOPEN)
-#if !defined(NO_BOARD_LIB)
-    // Read clock settings and update SystemCoreClock variable
-    SystemCoreClockUpdate();
-    // Set up and initialize all required blocks and
-    // functions related to the board hardware
+	SystemCoreClockUpdate();
     Board_Init();
-    // Set the LED to the state of "On"
-    Board_LED_Set(0, true);
-#endif
-#endif
-
-    // TODO: insert code here
-    uint8_t key;
-	uint8_t buff[14];
+	Init_PinMux();
 
 	i2c_app_init(I2C0, I2C_DEFAULT_SPEED);
-	Init_UART_PinMux();
 
 	/* Setup UART for 115.2K8N1 */
 	Chip_UART_Init(LPC_USART);
@@ -219,9 +177,7 @@ int main(void) {
 	Chip_I2C_MasterSend(i2cDev, DEFAULT_MPU6050_ADDR, pwr_mgmt_data, 2);
 
 
-	/* Poll the receive ring buffer for the ESC (ASCII 27) key */
-	key = 0;
-	while (key != 27) {
+	while (key != 'q') {
 		Chip_UART_ReadRB(LPC_USART, &rxring, &key, 1);
 		if (key == 'i') {
 			//  send first register
@@ -234,10 +190,8 @@ int main(void) {
 			int16_t accX = (buff[0] << 8 | buff[1]);
 			int16_t accY = (buff[2] << 8 | buff[3]);
 			int16_t accZ = (buff[4] << 8 | buff[5]);
-
 			int16_t temp = (buff[6] << 8 | buff[7]);
 			temp = temp / 340 + 36.53;
-
 			int16_t girX = (buff[8] << 8 | buff[9]);
 			int16_t girY = (buff[10] << 8 | buff[11]);
 			int16_t girZ = (buff[12] << 8 | buff[13]);
@@ -261,13 +215,9 @@ int main(void) {
 	NVIC_DisableIRQ(UART0_IRQn);
 	Chip_UART_DeInit(LPC_USART);
 
-    // Force the counter to be placed into memory
-    volatile static int i = 0 ;
-    // Enter an infinite loop, just incrementing a counter
-    while(1) {
-        i++ ;
-    }
-    return 0 ;
+    volatile static int i = 0;
+    while(1) {i++;}
+    return 0;
 }
 
 
